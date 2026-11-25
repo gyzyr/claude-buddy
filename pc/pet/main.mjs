@@ -80,6 +80,7 @@ function createPet() {
   pet.setAlwaysOnTop(true, "screen-saver");             // выше панели задач
   pet.setVisibleOnAllWorkspaces(true);
   pet.loadFile(join(here, "pet.html"));
+  pet.webContents.on("console-message", (e) => { if (e.level === "error" || e.level === "warning") log("pet.html:", e.message); });
   pet.once("ready-to-show", () => { place(); pet.showInactive(); });
 }
 
@@ -104,9 +105,11 @@ function fullscreenUnderPet() {
 function checkFullscreen() {
   if (!pet || pet.isDestroyed() || yFree != null) return;
   const fs = fullscreenUnderPet();
-  if (fs && !fsHidden) { fsHidden = true; pet.hide(); log("fullscreen app — прячусь"); }
-  else if (!fs && fsHidden) { fsHidden = false; place(); pet.showInactive(); popupWin?.isDestroyed() === false && popupWin.showInactive(); }
-  if (fsHidden && popupWin && !popupWin.isDestroyed() && popupWin.isVisible()) popupWin.hide();
+  // Не прячем окно (после hide/show прозрачное окно перестаёт ловить клики) — просто опускаем его под полноэкранное приложение.
+  const wins = [pet, popupWin].filter((w) => w && !w.isDestroyed());
+  if (fs && !fsHidden) { fsHidden = true; for (const w of wins) w.setAlwaysOnTop(false); log("fullscreen app — ухожу под него"); }
+  else if (!fs && fsHidden) { fsHidden = false; for (const w of wins) { w.setAlwaysOnTop(true, "screen-saver"); w.moveTop(); } log("fullscreen закрыт — снова сверху"); }
+  else if (fsHidden && popupWin && !popupWin.isDestroyed() && popupWin.isAlwaysOnTop()) popupWin.setAlwaysOnTop(false);
 }
 
 // ---- поведение ----
@@ -203,7 +206,7 @@ function updatePopup(alerts) {
     });
     popupWin.setAlwaysOnTop(true, "screen-saver");
     popupWin.loadFile(join(here, "popup.html"));
-    popupWin.webContents.once("did-finish-load", () => { popupWin?.webContents.send("popup", data); if (!fsHidden) popupWin?.showInactive(); });
+    popupWin.webContents.once("did-finish-load", () => { popupWin?.webContents.send("popup", data); popupWin?.showInactive(); });
     popupId = top.id;
     if (Notification.isSupported() && !String(top.id).startsWith("code-")) new Notification({ title: `${top.app} · ${top.who}`, body: top.summary, silent: false }).show();
   } else {
@@ -289,6 +292,7 @@ ipcMain.on("stop-look", () => stopLooking("кнопка Стоп"));
 // ---- перетаскивание: зажал и тащишь — Claude висит в воздухе; отпустил — падает на панель задач ----
 let dragOff = { x: SIZE / 2, y: 30 }, fallTimer = null;
 ipcMain.on("drag", (_e, phase, sx, sy) => {
+  if (phase !== "move") log("drag", phase);
   if (!pet || pet.isDestroyed() || looking) return;
   if (phase === "start") {
     if (fallTimer) { clearInterval(fallTimer); fallTimer = null; }
@@ -324,6 +328,7 @@ function showCodeNote() {
   tick();
 }
 ipcMain.on("open-chat", () => {
+  log("click: looking=" + !!looking, "activity=" + lastActivity);
   if (looking) stopLooking("клик по питомцу");
   else if (lastActivity === "alert") showCodeNote();
   else openChat();
