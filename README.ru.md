@@ -36,8 +36,8 @@
 ### 1. Запусти мини-Claude на ПК
 
 ```powershell
-git clone https://github.com/SusGoing/claude-phone-assistant.git
-cd claude-phone-assistant
+git clone https://github.com/SusGoing/claude-budy.git
+cd claude-budy
 .\pc\start-pet.cmd
 ```
 
