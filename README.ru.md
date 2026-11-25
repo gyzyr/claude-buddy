@@ -36,8 +36,8 @@
 ### 1. Запусти мини-Claude на ПК
 
 ```powershell
-git clone https://github.com/gyzyr/claude-budy.git
-cd claude-budy
+git clone https://github.com/gyzyr/claude-buddy.git
+cd claude-buddy
 .\pc\start-pet.cmd
 ```
 

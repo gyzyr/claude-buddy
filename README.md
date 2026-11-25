@@ -36,8 +36,8 @@ A personal Android assistant that fights doomscrolling, plus a little blocky Cla
 ### 1. Start mini-Claude on the PC
 
 ```powershell
-git clone https://github.com/gyzyr/claude-budy.git
-cd claude-budy
+git clone https://github.com/gyzyr/claude-buddy.git
+cd claude-buddy
 .\pc\start-pet.cmd
 ```
 
