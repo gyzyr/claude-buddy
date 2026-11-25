@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import { existsSync, appendFileSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
+import { createRequire } from "node:module";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -82,8 +83,35 @@ function createPet() {
   pet.once("ready-to-show", () => { place(); pet.showInactive(); });
 }
 
+// ---- не лезем поверх полноэкранных приложений (видео, игры, презентации) ----
+let libnut = null;
+try { libnut = createRequire(import.meta.url)("@nut-tree-fork/libnut-win32"); } catch (e) { log("libnut:", e?.message); }
+let fsHidden = false;
+const hwnd = (w) => { try { return w.getNativeWindowHandle().readUInt32LE(0); } catch { return 0; } };
+/** Активное окно занимает весь монитор питомца целиком (вместе с местом панели задач)? Развёрнутое окно — нет. */
+function fullscreenUnderPet() {
+  if (!libnut) return false;
+  try {
+    const h = libnut.getActiveWindow();
+    if (!h || BrowserWindow.getAllWindows().some((w) => !w.isDestroyed() && hwnd(w) === h)) return false; // наше окно
+    const title = libnut.getWindowTitle(h);
+    if (!title || title === "Program Manager") return false;               // рабочий стол
+    const r = screen.screenToDipRect(null, libnut.getWindowRect(h));
+    const d = screen.getDisplayNearestPoint({ x: Math.round(x + SIZE / 2), y: Math.round(floorAt(x) - 10) }).bounds;
+    return r.x <= d.x && r.y <= d.y && r.x + r.width >= d.x + d.width && r.y + r.height >= d.y + d.height;
+  } catch { return false; }
+}
+function checkFullscreen() {
+  if (!pet || pet.isDestroyed() || yFree != null) return;
+  const fs = fullscreenUnderPet();
+  if (fs && !fsHidden) { fsHidden = true; pet.hide(); log("fullscreen app — прячусь"); }
+  else if (!fs && fsHidden) { fsHidden = false; place(); pet.showInactive(); popupWin?.isDestroyed() === false && popupWin.showInactive(); }
+  if (fsHidden && popupWin && !popupWin.isDestroyed() && popupWin.isVisible()) popupWin.hide();
+}
+
 // ---- поведение ----
 function tick() {
+  checkFullscreen();
   const s = brain.pcStatus();
   const hour = new Date().getHours();
   if (s.activity !== lastActivity) {
@@ -175,7 +203,7 @@ function updatePopup(alerts) {
     });
     popupWin.setAlwaysOnTop(true, "screen-saver");
     popupWin.loadFile(join(here, "popup.html"));
-    popupWin.webContents.once("did-finish-load", () => { popupWin?.webContents.send("popup", data); popupWin?.showInactive(); });
+    popupWin.webContents.once("did-finish-load", () => { popupWin?.webContents.send("popup", data); if (!fsHidden) popupWin?.showInactive(); });
     popupId = top.id;
     if (Notification.isSupported() && !String(top.id).startsWith("code-")) new Notification({ title: `${top.app} · ${top.who}`, body: top.summary, silent: false }).show();
   } else {
@@ -341,7 +369,7 @@ app.whenReady().then(() => {
   tray.on("right-click", () => tray.popUpContextMenu(buildMenu()));
   setInterval(tick, 1000);
   // держимся поверх панели задач (она тоже «поверх всех»)
-  setInterval(() => { if (pet && !pet.isDestroyed()) pet.moveTop(); }, 4000);
+  setInterval(() => { if (pet && !pet.isDestroyed() && !fsHidden) pet.moveTop(); }, 4000);
   // Телефон по кабелю: держим проброс порта 8787 (он слетает при переподключении USB / перезапуске adb).
   ensureReverse(); setInterval(ensureReverse, 20_000);
   // самопроверка «посмотри на экран» (только при PET_SELFTEST=1): ответ — в pet.log
