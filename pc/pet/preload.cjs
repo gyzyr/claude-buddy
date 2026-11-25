@@ -13,5 +13,5 @@ contextBridge.exposeInMainWorld("pet", {
   // облачко с важным сообщением с телефона
   onPopup: (cb) => ipcRenderer.on("popup", (_e, p) => cb(p)),
   dismissPopup: (id) => ipcRenderer.send("popup-dismiss", id),
-  popupSize: (h) => ipcRenderer.send("popup-size", h),
+  popupSize: (h, w) => ipcRenderer.send("popup-size", h, w),
 });

@@ -155,16 +155,16 @@ ipcMain.handle("chat", async (_e, messages) => {
   } catch (e) { return `Не получилось спросить Claude Code: ${e.message}`; }
 });
 // ---- облачко над головой: важное сообщение с телефона (мессенджеры, почта) ----
-let popupWin = null, popupId = null, popupH = 86; // высоту подсказывает само облачко (длинный текст — выше)
-const POPUP_W = 320;
-const popupPos = () => ({ x: Math.round(x) + SIZE / 2 - POPUP_W / 2, y: floorAt(x) - SIZE - popupH + 22 });
+// размер подсказывает само облачко: короткий текст — узкое, длинный — до 320 в ширину и выше
+let popupWin = null, popupId = null, popupH = 86, popupW = 320;
+const popupPos = () => ({ x: Math.round(x) + SIZE / 2 - Math.round(popupW / 2), y: floorAt(x) - SIZE - popupH + 22 });
 function updatePopup(alerts) {
   const top = alerts.at(-1);
   if (!top || looking) {
     if (popupWin && !popupWin.isDestroyed()) popupWin.destroy();
     popupWin = null; popupId = null; return;
   }
-  const w = POPUP_W, h = popupH;
+  const w = popupW, h = popupH;
   const pos = popupPos();
   const data = { ...top, more: alerts.length - 1 };
   if (!popupWin || popupWin.isDestroyed()) {
@@ -186,9 +186,10 @@ function updatePopup(alerts) {
 }
 ipcMain.on("popup-dismiss", (_e, id) => { if (codeNote?.id === id) codeNote = null; else brain.dismissPhoneAlert(id); tick(); });
 // облачко растёт вверх: нижний край (хвостик над головой) остаётся на месте
-ipcMain.on("popup-size", (_e, h) => {
+ipcMain.on("popup-size", (_e, h, w) => {
   popupH = Math.max(60, Math.min(260, Math.round(h)));
-  if (popupWin && !popupWin.isDestroyed()) popupWin.setBounds({ ...popupPos(), width: POPUP_W, height: popupH });
+  if (w) popupW = Math.max(140, Math.min(320, Math.round(w)));
+  if (popupWin && !popupWin.isDestroyed()) popupWin.setBounds({ ...popupPos(), width: popupW, height: popupH });
 });
 
 // ---- «посмотри на экран»: Claude поворачивается к экрану, смотрит снимки, отвечает в чате ----
