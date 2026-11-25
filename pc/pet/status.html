@@ -1,0 +1,18 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'">
+<style>
+  html, body { margin: 0; background: transparent; overflow: hidden; user-select: none; font: 13px "Segoe UI", sans-serif; }
+  #b { margin: 4px auto; width: fit-content; max-width: 288px; display: flex; align-items: center; gap: 8px;
+       background: #fff; color: #2B1B14; border-radius: 14px; padding: 6px 6px 6px 12px; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+  #t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  button { border: 0; border-radius: 10px; background: #C0392B; color: #fff; font: inherit; padding: 4px 10px; cursor: pointer; }
+</style></head>
+<body>
+<div id="b"><span id="t">👀 Смотрю на экран…</span><button id="s">Стоп</button></div>
+<script>
+  const t = document.getElementById("t");
+  window.pet.onStatus((text) => { t.textContent = text.replace(" (клик по мне — стоп)", ""); });
+  document.getElementById("s").addEventListener("click", () => window.pet.stopLook());
+</script>
+</body></html>

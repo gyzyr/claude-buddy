@@ -1,0 +1,19 @@
+# dependencies / build output
+pc/pet/node_modules/
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.apk
+
+# secrets and per-machine state (created at runtime)
+pc/.brain-token
+pc/.phone-sessions.json
+pc/.phone-snapshot.json
+
+# personal notes and old prototype
+.claude/
+NIGHT-REPORT.md
+SPEC.md
+SETUP.md
+pc/desktop/

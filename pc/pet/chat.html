@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><title>Claude</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'">
+<style>
+  :root { --cream: #FAF3EC; --orange: #D97757; --ink: #2B1B14; }
+  html, body { margin: 0; height: 100%; background: var(--cream); font: 15px/1.45 "Segoe UI", sans-serif; color: var(--ink); }
+  body { display: flex; flex-direction: column; }
+  #log { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+  .m { max-width: 82%; padding: 9px 13px; border-radius: 16px; white-space: pre-wrap; word-wrap: break-word; }
+  .me { align-self: flex-end; background: var(--orange); color: #fff; border-bottom-right-radius: 4px; }
+  .cl { align-self: flex-start; background: #fff; border-bottom-left-radius: 4px; }
+  .muted { color: rgba(43,27,20,.6); font-size: 13px; align-self: center; }
+  .offer { align-self: flex-start; display: flex; gap: 6px; }
+  .offer button { width: auto; font-size: 14px; padding: 7px 12px; }
+  .offer .no { background: #fff; color: var(--ink); border: 1px solid rgba(43,27,20,.2); }
+  form { display: flex; gap: 8px; padding: 10px; border-top: 1px solid rgba(43,27,20,.08); }
+  textarea { flex: 1; resize: none; border: 1px solid rgba(43,27,20,.2); border-radius: 14px; padding: 9px 12px; font: inherit; background: #fff; outline: none; height: 22px; }
+  textarea:focus { border-color: var(--orange); }
+  button { border: 0; border-radius: 14px; background: var(--orange); color: #fff; font-size: 18px; width: 46px; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  #scr { background: #fff; border: 1px solid rgba(43,27,20,.2); font-size: 17px; }
+  #scr.on { background: var(--ink); border-color: var(--ink); }
+  #scr.ctl { background: #C0392B; border-color: #C0392B; }
+  #mode { display: none; padding: 6px 14px 0; font-size: 13px; color: var(--orange); }
+</style></head>
+<body>
+<div id="log"></div>
+<div id="mode"></div>
+<form id="f">
+  <button type="button" id="scr" title="Экран: смотреть / управлять">🖥️</button>
+  <textarea id="t" placeholder="Написать Claude… (Enter — отправить)" autofocus></textarea><button id="b">➤</button>
+</form>
+<script>
+const log = document.getElementById("log"), t = document.getElementById("t"), b = document.getElementById("b");
+const scr = document.getElementById("scr"), mode = document.getElementById("mode");
+const history = [];
+let screenMode = 0; // 0 — обычный чат, 1 — посмотреть на экран, 2 — посмотреть и сделать (управление)
+function add(cls, text) { const d = document.createElement("div"); d.className = "m " + cls; d.textContent = text; log.appendChild(d); log.scrollTop = log.scrollHeight; return d; }
+add("cl", "Привет! Спроси про проекты на ПК, про телефон, про расписание — что угодно. Кнопка 🖥️: один раз — посмотрю на экран, два раза — сделаю сам.");
+const alertProject = new URLSearchParams(location.search).get("alert");
+if (alertProject) add("cl", `Кстати, на ПК всё готово в «${alertProject}» — загляни в Claude Code!`);
+
+const MODES = [
+  { ph: "Написать Claude… (Enter — отправить)", note: "" },
+  { ph: "Что посмотреть на экране? (Enter — отправить)", note: "👀 Посмотрю на экран и подскажу. Ничего не нажимаю." },
+  { ph: "Что сделать на компьютере? (Enter — отправить)", note: "🛠️ Сам буду кликать и печатать. Стоп — клик по мне или кнопка «Стоп». Пароли, оплату и отправку сообщений не трогаю." },
+];
+function setMode(m) {
+  screenMode = m; scr.classList.toggle("on", m === 1); scr.classList.toggle("ctl", m === 2);
+  mode.textContent = MODES[m].note; mode.style.display = m ? "block" : "none";
+  t.placeholder = MODES[m].ph; t.focus();
+}
+scr.addEventListener("click", () => setMode((screenMode + 1) % 3));
+
+// «посмотри на экран» в тексте — предлагаем, но без разрешения на экран не смотрим
+const ASKS_SCREEN = /(посмотр|глян|взгля|видишь|смотри).{0,25}(экран|монитор)|на (мой |моём |моем )?экран|screen|управля|(сделай|нажми|открой|закрой|исправь).{0,20}(на компе|на компьютере|на пк|за меня)/i;
+
+async function lookAtScreen(text, control = false) {
+  b.disabled = true; scr.disabled = true;
+  const wait = add("muted", control ? "🛠️ Поворачиваюсь к экрану, берусь за дело…" : "👀 Поворачиваюсь к экрану…");
+  const reply = await window.pet.screen(text, history.slice(-10), control);
+  wait.remove(); add("cl", reply); history.push({ role: "assistant", text: reply });
+  b.disabled = false; scr.disabled = false; t.focus();
+}
+
+async function send() {
+  const text = t.value.trim(); if (!text || b.disabled) return;
+  t.value = ""; add("me", text); history.push({ role: "user", text });
+  if (screenMode) { const ctl = screenMode === 2; setMode(0); return lookAtScreen(text, ctl); }
+  if (ASKS_SCREEN.test(text)) {
+    const offer = document.createElement("div"); offer.className = "offer";
+    const yes = document.createElement("button"); yes.textContent = "👀 Посмотреть на экран";
+    const fix = document.createElement("button"); fix.textContent = "🛠️ Сделай сам"; fix.style.background = "#C0392B";
+    const no = document.createElement("button"); no.textContent = "Без экрана"; no.className = "no";
+    offer.append(yes, fix, no); log.appendChild(offer); log.scrollTop = log.scrollHeight;
+    yes.onclick = () => { offer.remove(); lookAtScreen(text); };
+    fix.onclick = () => { offer.remove(); lookAtScreen(text, true); };
+    no.onclick = () => { offer.remove(); ask(); };
+    return;
+  }
+  ask();
+}
+
+async function ask() {
+  b.disabled = true; const wait = add("muted", "Claude думает…");
+  const reply = await window.pet.chat(history.slice(-20));
+  wait.remove(); add("cl", reply); history.push({ role: "assistant", text: reply });
+  b.disabled = false; t.focus();
+}
+document.getElementById("f").addEventListener("submit", (e) => { e.preventDefault(); send(); });
+t.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
+</script>
+</body></html>

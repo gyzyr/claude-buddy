@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Claude</string>
+    <string name="service_label">Claude: следит за лентами</string>
+    <string name="service_description">Замечает, когда вы листаете бесконечные ленты (Reels, Shorts, TikTok), считает время и показывает напоминание после лимита. Содержимое экрана никуда не отправляется.</string>
+    <string name="notif_label">Claude: важные сообщения на ПК</string>
+    <string name="widget_description">Ролики за сегодня, следующее событие и когда Claude ждёт вас</string>
+</resources>

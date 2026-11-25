@@ -1,0 +1,31 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'">
+<style>
+  html, body { margin: 0; background: transparent; overflow: hidden; user-select: none; font: 13px/1.35 "Segoe UI", sans-serif; }
+  /* облачко прижато к низу окна: если текст длинный, окно растёт вверх */
+  #b { position: absolute; left: 6px; right: 6px; bottom: 12px; background: #fff; color: #2B1B14; border-radius: 14px;
+       padding: 8px 30px 8px 12px; box-shadow: 0 2px 10px rgba(0,0,0,.3); cursor: pointer; }
+  #b::after { content: ""; position: absolute; bottom: -8px; left: 50%; margin-left: -8px; border: 8px solid transparent; border-bottom: 0; border-top-color: #fff; }
+  #h { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #s { color: rgba(43,27,20,.85); white-space: pre-wrap; word-wrap: break-word;
+       display: -webkit-box; -webkit-line-clamp: 8; -webkit-box-orient: vertical; overflow: hidden; }
+  #r { color: #D97757; font-size: 12px; margin-top: 2px; }
+  #x { position: absolute; top: 4px; right: 8px; color: rgba(43,27,20,.5); font-size: 15px; }
+</style></head>
+<body>
+<div id="b" title="Клик — понятно, убрать"><div id="h"></div><div id="s"></div><div id="r"></div><span id="x">×</span></div>
+<script>
+  let cur = null;
+  const b = document.getElementById("b");
+  window.pet.onPopup((p) => {
+    cur = p;
+    document.getElementById("h").textContent = `${p.icon || "💬"} ${p.app} · ${p.who}`;
+    document.getElementById("s").textContent = p.summary;
+    document.getElementById("r").textContent = (p.label || (p.reply ? "Ждёт ответа" : "Стоит глянуть")) + (p.more ? ` · ещё ${p.more}` : "");
+    // сообщаем нужную высоту окна: облачко + хвостик + отступы
+    requestAnimationFrame(() => window.pet.popupSize(Math.ceil(b.getBoundingClientRect().height) + 12 + 8));
+  });
+  b.addEventListener("click", () => cur && window.pet.dismissPopup(cur.id));
+</script>
+</body></html>

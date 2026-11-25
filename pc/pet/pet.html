@@ -1,0 +1,173 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'">
+<style>
+  html, body { margin: 0; background: transparent; overflow: hidden; user-select: none; }
+  canvas { display: block; cursor: pointer; }
+</style></head>
+<body>
+<canvas id="c" width="104" height="104" title="Claude · клик — поговорить"></canvas>
+<script>
+// Квадратный объёмный Claude в сетке 100×100 — та же модель, что в телефоне.
+const c = document.getElementById("c"), g = c.getContext("2d");
+const U = c.width / 100;
+const COL = { top: "#EFA287", side: "#AE5538", dark: "#8E4129", ink: "#2B1B14" };
+let st = { act: "idle", left: false, project: null }, frame = 0;
+let turn = 0; // 0 — смотрит на нас, 1 — повернулся спиной (смотрит на экран)
+
+window.pet.onState((s) => {
+  st = s;
+  c.title = s.act === "coding" ? `Кодю${s.project ? " · " + s.project : ""}`
+          : s.act === "alert" ? `Готово${s.project ? " · " + s.project : ""} — загляни!`
+          : s.act === "sleep" ? "Сплю… (клик — поговорить)" : "Claude · клик — поговорить";
+});
+// Клик — чат. Зажать и потащить — перенести Claude (захват мыши работает и за пределами окна).
+let down = null, dragging = false;
+c.addEventListener("pointerdown", (e) => {
+  if (e.button !== 0) return;
+  c.setPointerCapture(e.pointerId);
+  down = { x: e.screenX, y: e.screenY }; dragging = false;
+});
+c.addEventListener("pointermove", (e) => {
+  if (!down) return;
+  if (!dragging && Math.hypot(e.screenX - down.x, e.screenY - down.y) > 5) { dragging = true; window.pet.drag("start", e.screenX, e.screenY); }
+  if (dragging) window.pet.drag("move", e.screenX, e.screenY);
+});
+c.addEventListener("pointerup", (e) => {
+  if (!down) return;
+  try { c.releasePointerCapture(e.pointerId); } catch {}
+  if (dragging) window.pet.drag("end", e.screenX, e.screenY); else window.pet.openChat();
+  down = null; dragging = false;
+});
+c.addEventListener("contextmenu", (e) => { e.preventDefault(); window.pet.menu(); });
+
+const R = (col, x, y, w, h) => { g.fillStyle = col; g.fillRect(x * U, y * U, w * U, h * U); };
+const poly = (col, ...p) => { g.fillStyle = col; g.beginPath(); g.moveTo(p[0] * U, p[1] * U);
+  for (let i = 2; i < p.length; i += 2) g.lineTo(p[i] * U, p[i + 1] * U); g.closePath(); g.fill(); };
+
+// Цвета блока: передняя грань, верх (светлее), бок (темнее), «стыки» и глаза.
+const F = { front: "#DE7A57", frontLo: "#CC6646", top: "#F09A78", side: "#B4573A", sideLo: "#9A4630",
+            eye: "#26262B", eyeHi: "#55555E", eyeLo: "#141417" };
+
+// Блок-«конечность» с лёгкой объёмностью: светлая верхняя кромка, тёмная нижняя.
+function limb(x, y, w, h) {
+  R(F.front, x, y, w, h);
+  R("rgba(255,255,255,0.16)", x, y, w, 1.4);
+  R("rgba(0,0,0,0.18)", x, y + h - 1.6, w, 1.6);
+}
+
+// Рука, повёрнутая вокруг плеча (px, py); dir = -1 — левая, 1 — правая; ang — подъём в градусах.
+function arm(px, py, dir, ang, len = 11) {
+  g.save();
+  g.translate(px * U, py * U);
+  g.rotate((-dir * ang * Math.PI) / 180);
+  const th = 8;
+  const x0 = dir < 0 ? -len : 0;
+  g.fillStyle = F.front; g.fillRect(x0 * U, (-th / 2) * U, len * U, th * U);
+  g.fillStyle = "rgba(255,255,255,0.16)"; g.fillRect(x0 * U, (-th / 2) * U, len * U, 1.4 * U);
+  g.fillStyle = "rgba(0,0,0,0.2)"; g.fillRect(x0 * U, (th / 2 - 1.6) * U, len * U, 1.6 * U);
+  g.restore();
+}
+
+// Квадратный глаз с фаской, как у фигурки: светлая кромка сверху-слева, тёмная снизу-справа.
+function eye(x, y, closed) {
+  if (closed) { R(F.eye, x, y + 4, 9, 2.4); return; }
+  R(F.eyeLo, x, y, 9, 9);
+  R(F.eye, x, y, 8, 8);
+  R(F.eyeHi, x, y, 8, 1.3); R(F.eyeHi, x, y, 1.3, 8);
+  R("rgba(255,255,255,0.35)", x + 2, y + 2, 2, 2);
+}
+
+function draw() {
+  const { act, left } = st;
+  g.clearRect(0, 0, c.width, c.height);
+  const walking = act === "walk", alert = act === "alert", held = act === "drag"; // held — несут на руках мыши
+  const dy = act === "coding" ? (frame % 2 ? 0 : -0.8)
+           : walking ? (frame % 4 < 2 ? -1.5 : 0)
+           : alert ? (frame % 4 < 2 ? -2.5 : 0)
+           : (frame % 10 < 5 ? -0.6 : 0);
+
+  // тень на панели задач
+  g.fillStyle = "rgba(0,0,0,0.22)"; g.beginPath(); g.ellipse(53 * U, 83 * U, 36 * U, 3 * U, 0, 0, Math.PI * 2); g.fill();
+
+  // поворот к экрану: сжимаем по ширине до «ребра» и показываем спину
+  const want = act === "look" ? 1 : 0;
+  turn += Math.max(-0.25, Math.min(0.25, want - turn));
+  const back = turn > 0.5, sx = Math.max(0.1, Math.abs(Math.cos(turn * Math.PI)));
+  g.save();
+  // спиной к нам, развёрнут к экрану: стоит справа — повёрнут влево (виден левый бок),
+  // слева — вправо (виден правый бок), по центру — ровно спиной, смотрит вверх
+  const gaze = st.gaze || 0, straight = back && gaze === 0;
+  g.translate(53 * U, 0); g.scale(sx, 1); g.translate(-53 * U, 0);
+  // Рисунок без отражения повёрнут влево (виден правый бок). Идёт вправо — отражаем, чтобы смотрел по ходу, а не пятился.
+  if (back ? gaze === -1 : !left) { g.translate(c.width, 0); g.scale(-1, 1); }
+
+  // ножки: две пары у краёв, как у фигурки
+  [24, 33, 60, 69].forEach((lx, i) => {
+    const up = walking && ((i % 2 === 0) === (frame % 4 < 2)) ? 2.5 : held ? ((i + (frame >> 1)) % 2 ? -2 : 0) : 0; // в воздухе ножки болтаются
+    limb(lx, 66 + dy - up, 7, 16);
+    R(F.sideLo, lx + 7, 66 + dy - up, 1.5, 16); // тень сбоку ножки
+  });
+
+  // руки: в тревоге машут обеими, при ходьбе слегка качаются, при работе «печатают»
+  const wave = frame % 4 < 2 ? 105 : 60;
+  const lookArm = frame % 10 < 5 ? 30 : 40; // спиной: рука у «подбородка» — думает
+  const angL = held ? 70 + (frame % 4 < 2 ? 0 : 15) : back ? lookArm : alert ? wave : walking ? (frame % 4 < 2 ? 8 : -6) : act === "coding" ? -18 + (frame % 2) * 6 : 0;
+  const angR = held ? 70 + (frame % 4 < 2 ? 15 : 0) : alert ? wave : walking ? (frame % 4 < 2 ? -6 : 8) : act === "coding" ? -18 + ((frame + 1) % 2) * 6 : 0;
+  arm(alert ? 89 : straight ? 80 : 86, 45 + dy, 1, angR, alert ? 15 : 11);   // правая — за боком, рисуем раньше тела
+
+  // тело: верх, бок, передняя грань
+  const up = back ? 4 : 0; // спиной и вверх — видно больше «макушки»
+  let gr;
+  if (straight) poly(F.top, 20, 30 + dy, 80, 30 + dy, 76, 24 + dy - up, 24, 24 + dy - up); // ровно спиной: бока не видно
+  else {
+    poly(F.top, 20, 30 + dy, 80, 30 + dy, 86, 24 + dy - up, 26, 24 + dy - up);
+    gr = g.createLinearGradient(0, 24 * U, 0, 66 * U); gr.addColorStop(0, F.side); gr.addColorStop(1, F.sideLo);
+    poly(gr, 80, 30 + dy, 86, 24 + dy - up, 86, 60 + dy, 80, 66 + dy);
+  }
+  gr = g.createLinearGradient(0, (30 + dy) * U, 0, (66 + dy) * U);
+  gr.addColorStop(0, "#E88563"); gr.addColorStop(0.55, F.front); gr.addColorStop(1, F.frontLo);
+  R(gr, 20, 30 + dy, 60, 36);
+  R("rgba(255,255,255,0.22)", 20, 30 + dy, 60, 1.2);       // светлое ребро сверху
+  R("rgba(0,0,0,0.12)", 20, 64.6 + dy, 60, 1.4);           // тёмное ребро снизу
+  if (back) R("rgba(0,0,0,0.07)", 20, 30 + dy, 60, 36);    // спина чуть темнее
+
+  arm(alert ? 17 : 20, 45 + dy, -1, angL, alert ? 15 : 11);  // левая — спереди
+
+  const blink = act !== "sleep" && frame % 45 === 0;
+  const closed = act === "sleep" || blink, look = act === "coding" ? 2 : walking ? -2.5 : -1; // глаза — в сторону, куда повёрнут
+  if (!back) { eye(33 + look, 38 + dy, closed); eye(57 + look, 38 + dy, closed); }
+
+  if (act === "coding" && !back) {
+    // ноутбук стоит к нам задней крышкой; клавиатура уходит вглубь — вправо-вверх, к нему
+    poly("#7A7A84", 23, 63 + dy, 67, 63 + dy, 75, 55 + dy, 31, 55 + dy); // основание (сверху)
+    poly("#55555E", 67, 63 + dy, 75, 55 + dy, 75, 57.5 + dy, 67, 65.5 + dy); // его правый торец
+    R("#5E5E68", 23, 63 + dy, 44, 2.5);                    // передний торец основания
+    R("#34343B", 25, 48 + dy, 40, 15);                     // крышка
+    R("#4A4A53", 25, 48 + dy, 40, 1.4);                    // светлая кромка
+    R("#26262B", 25, 61.6 + dy, 40, 1.4);
+    R(frame % 2 ? "#FFFFFF" : "#E6E6EC", 43, 53 + dy, 4, 4); // белый огонёк на крышке
+  }
+  g.restore();
+
+  // «!» над головой, подпрыгивает вместе с ним
+  if (alert) {
+    const by = frame % 4 < 2 ? -1.5 : 0;
+    R("#C0392B", 47.5, 2 + by, 7, 12); R("#C0392B", 47.5, 16 + by, 7, 5);
+    R("rgba(255,255,255,0.3)", 47.5, 2 + by, 2, 12);
+  }
+  if (act === "sleep") {
+    g.fillStyle = "#F3E3D6"; g.font = `bold ${11 * U}px Segoe UI`;
+    g.fillText(frame % 16 < 8 ? "z" : "Z", 84 * U, (16 - (frame % 16) * 0.5) * U);
+  }
+}
+
+// Кадры только с нужной частотой: в покое — редко, чтобы не грузить CPU.
+function loop() {
+  frame++; draw();
+  const ms = st.act === "walk" || st.act === "drag" || (turn > 0 && turn < 1) || (st.act !== "look" && turn > 0) ? 90 : st.act === "look" ? 160 : st.act === "coding" ? 160 : st.act === "alert" ? 120 : 220;
+  setTimeout(loop, ms);
+}
+loop();
+</script>
+</body></html>
