@@ -367,6 +367,10 @@ app.whenReady().then(() => {
     app.setLoginItemSettings({ openAtLogin: false });
     setAutostart(true);
   }
+  // ярлык мог указывать на старый electron.exe — обновляем на текущий exe (Claude Buddy.exe)
+  else if (autostartOn()) {
+    try { if (shell.readShortcutLink(STARTUP_LNK).target !== process.execPath) setAutostart(true); } catch {}
+  }
   createPet();
   tray = new Tray(nativeImage.createFromPath(join(here, "icon.png")));
   tray.setToolTip("Claude");
