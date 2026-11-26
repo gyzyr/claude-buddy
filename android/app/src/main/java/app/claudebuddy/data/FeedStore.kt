@@ -222,6 +222,8 @@ class FeedStore private constructor(private val ctx: Context) {
                 it[kBrainUrl] = s.brainUrl.trim().trimEnd('/')
                 it[kBrainToken] = s.brainToken.trim()
             }
+            // виджет показывает «N / лимит» — обновляем сразу, а не через полчаса
+            app.claudebuddy.widget.WidgetUpdater.poke(ctx)
         }
     }
 

@@ -47,6 +47,7 @@ class FeedWatcherService : AccessibilityService() {
     private val seenIndices = mutableSetOf<Int>() // уже посчитанные ролики в текущем заходе в ленту
     private var pending: Pair<kotlinx.coroutines.Job, String>? = null // ролик, ожидающий проверки на рекламу
     private var dumpCounter = 0
+    private var enteredAt = 0L          // когда вошли в ленту
 
     // присланный рилс (открыт из личных сообщений): его можно смотреть и после лимита
     private var lastScreenWasDirect = false
@@ -121,6 +122,9 @@ class FeedWatcherService : AccessibilityService() {
         inFeed = value
         lastIndex = -1
         seenIndices.clear()
+        enteredAt = System.currentTimeMillis()
+        // мелькнула лента и сразу ушли — «вход в ленту» не засчитываем
+        if (!value) pending?.first?.cancel()
         sharedMode = value && lastScreenWasDirect
         Log.d(TAG, "${app?.title ?: "—"}: inFeed=$value${if (sharedMode) " (присланный рилс из личных сообщений)" else ""}")
         if (value && app != null) bubble.show(app.countVideos) else bubble.hide()
@@ -139,7 +143,12 @@ class FeedWatcherService : AccessibilityService() {
             // чтобы листание назад-вперёд не накручивало счёт.
             indexMode = true
             if (lastIndex == -1) seenIndices.clear()
-            if (seenIndices.add(from) && lastIndex != -1) {
+            // Первое событие с индексом. Пришло сразу при входе — это стартовый ролик (уже посчитан при входе).
+            // Пришло позже — пользователь уже пролистал (Instagram при входе шлёт индекс без числа роликов).
+            val firstAfterSwipe = lastIndex == -1 && from > 0 && now - enteredAt > ENTRY_SETTLE_MS
+            // стартовый ролик был перед этим — помечаем его виденным, чтобы возврат назад не считался
+            if (firstAfterSwipe) seenIndices.add(from - 1)
+            if (seenIndices.add(from) && (lastIndex != -1 || firstAfterSwipe)) {
                 // пролистал дальше присланного рилса — это уже обычная лента
                 if (sharedMode) { sharedMode = false; Log.d(TAG, "присланный рилс досмотрен, дальше — лента") }
                 countVideo(app, "индекс $lastIndex→$from")
@@ -171,6 +180,14 @@ class FeedWatcherService : AccessibilityService() {
         val ad = nodes.firstOrNull { node -> AD_LABELS.any { node.text.equals(it, ignoreCase = true) || node.text.startsWith("$it ·", ignoreCase = true) } }
         if (ad != null) {
             Log.d(TAG, "${app.title}: пропуск #$n — реклама («${ad.text}»)")
+            return
+        }
+        // Свой рилс (в Instagram под ним кнопки «Статистика» / «Продвигать») — не считаем.
+        // Надёжнее всего — панель автора «clips_self_view_…» (не зависит от языка), кнопки — запасной признак.
+        val own = nodes.firstOrNull { it.id.startsWith("clips_self_view") }
+            ?: nodes.firstOrNull { node -> OWN_LABELS.any { node.text.equals(it, ignoreCase = true) } }
+        if (own != null) {
+            Log.d(TAG, "${app.title}: пропуск #$n — свой ролик («${own.text}»)")
             return
         }
         store.addVideo(app.pkg)
@@ -278,12 +295,19 @@ class FeedWatcherService : AccessibilityService() {
         /** Минимальный сдвиг ленты вперёд, который считается переходом к следующему ролику. */
         const val MIN_SWIPE_PX = 300
         const val CLASSIFY_DELAY_MS = 700L
+        /** Сколько после входа в ленту события прокрутки ещё относятся к стартовому ролику. */
+        const val ENTRY_SETTLE_MS = 1500L
         const val DUMP_TAG = "ClaudeDump"
         /** Экран переписки в Instagram — признаки уточняются по логам. */
         /** Экран сторис в Instagram (внутри он называется reel_viewer — это НЕ Reels). */
         val STORY_MARKERS = listOf("reel_viewer", "story_viewer", "reel_viewer_media", "reel_viewer_header")
         val DIRECT_MARKERS = listOf("direct_thread", "thread_message", "message_list", "row_thread", "direct_composer")
         /** Метки рекламы (точное совпадение текста элемента или «метка · …»). Уточняются по логам. */
+        /** Кнопки, которые Instagram показывает только под вашими собственными роликами. Уточняются по логам. */
+        val OWN_LABELS = listOf(
+            "Статистика", "Посмотреть статистику", "Продвигать", "Продвигать Reels", "Продвигать публикацию",
+            "Insights", "View insights", "See insights", "Boost", "Boost reel", "Boost post",
+        )
         val AD_LABELS = listOf("Реклама", "Спонсорский контент", "Спонсорская публикация", "Sponsored", "Ad", "Рекламное объявление")
     }
 }
