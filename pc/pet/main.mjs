@@ -281,6 +281,7 @@ function stopLooking(why = "?") {
 }
 
 ipcMain.handle("screen", (_e, a) => lookAtScreen(a));
+brain.setScreenRunner((a) => lookAtScreen(a)); // задание с телефона: «открой ватсап на компе и посмотри…»
 async function lookAtScreen({ text, history, control = false }) {
   if (looking) return "Я уже смотрю на экран — подожди чуть-чуть.";
   brain.ackAlert();

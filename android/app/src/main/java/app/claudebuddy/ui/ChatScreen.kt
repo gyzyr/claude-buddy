@@ -86,9 +86,10 @@ fun ChatScreen(store: FeedStore, chat: ChatStore, pcOnline: Boolean) {
         runCatching {
             val events = CalendarRepo.upcoming(ctx)
             client.chat(chat.messages.value.filter { it.channel == "" }, dayContext(today, settings, events))
-        }.onSuccess { reply ->
+        }.onSuccess { (reply, job) ->
             chat.markSent("")
             chat.add(ChatMessage("assistant", reply.ifBlank { "…" }, System.currentTimeMillis()))
+            if (job != null) chat.setJob("", job) // мини-Claude на ПК делает задание — ответ придёт следом
         }
         sending = false
     }

@@ -81,10 +81,11 @@ class PcClient(private val baseUrl: String, private val token: String) {
     /** Снимок дня с телефона — чтобы мини-Claude на ПК знал про ленты и расписание. */
     suspend fun pushPhone(context: JSONObject) { request("/phone", context) }
 
-    suspend fun chat(messages: List<ChatMessage>, context: JSONObject): String =
+    /** Ответ мини-Claude; если он дал задание компьютеру — ещё id задачи (ответ забирать через [codeJob]). */
+    suspend fun chat(messages: List<ChatMessage>, context: JSONObject): Pair<String, String?> =
         request("/chat", JSONObject()
             .put("messages", JSONArray(messages.map { JSONObject().put("role", it.role).put("text", it.text) }))
-            .put("context", context), readTimeout = 120_000).optString("reply")
+            .put("context", context), readTimeout = 120_000).let { it.optString("reply") to it.optString("job").ifBlank { null } }
 
     /** Команды для телефона от Claude на ПК (например, «сбросить счётчик лент»). Забранные — удаляются на ПК. */
     suspend fun commands(): List<String> = runCatching {

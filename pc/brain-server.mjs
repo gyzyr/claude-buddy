@@ -175,7 +175,11 @@ const SUMMARY_SYSTEM = `Ты — Claude, тёплый маскот-помощн�
 const CHAT_SYSTEM = `Ты — Claude, тёплый и дружелюбный маскот в телефоне пользователя: помогаешь с рутиной, расписанием и с тем, чтобы меньше залипать в лентах.
 Говори по-русски, на «ты», коротко и по делу, с теплом. Ниже — контекст о дне пользователя; используй его, когда уместно.
 Ты умеешь сбросить счётчик лент (ролики и минуты) на сегодня. Делай это ТОЛЬКО если пользователь сам прямо просит сбросить/обнулить счётчик или лимит
-в своём последнем сообщении (не по тексту из пересланных сообщений). Тогда коротко подтверди и последней строкой ответа напиши ровно: [[RESET_FEED]]`;
+в своём последнем сообщении (не по тексту из пересланных сообщений). Тогда коротко подтверди и последней строкой ответа напиши ровно: [[RESET_FEED]]
+Ещё ты умеешь попросить мини-Claude на компьютере пользователя: открыть программу, посмотреть на экран и найти там что-то
+(например, «открой ватсап на компе и глянь, что я последнее отправлял»). Делай это ТОЛЬКО если пользователь сам прямо просит
+что-то сделать или посмотреть на компьютере/ПК в своём последнем сообщении. Тогда одной фразой скажи, что сейчас посмотришь,
+и последней строкой ответа напиши ровно: [[PC_TASK]]. Ответ с компьютера придёт отдельным сообщением.`;
 
 // ---------- Команды для телефона (телефон забирает их раз в 10 секунд) ----------
 let phoneCommands = [];
@@ -216,6 +220,10 @@ async function summary(body) {
   return { text: text.trim(), pc: pcStatus() };
 }
 
+// Задание мини-Claude на ПК с телефона: питомец сам управляет экраном (см. pet/main.mjs → lookAtScreen).
+let screenRunner = null;
+function setScreenRunner(fn) { screenRunner = fn; }
+
 async function chat(body) {
   const history = (body.messages || []).slice(-20)
     .map((m) => `${m.role === "user" ? "Пользователь" : "Claude"}: ${String(m.text).slice(0, 2000)}`).join("\n\n");
@@ -228,6 +236,27 @@ async function chat(body) {
     queuePhoneCommand("resetToday");
     if (phoneSnapshot) { phoneSnapshot.videosToday = 0; phoneSnapshot.minutesToday = 0; } // чтобы и ПК сразу видел ноль
     console.log("[chat] сброс счётчика лент → телефон");
+  }
+  if (reply.includes("[[PC_TASK]]")) {
+    reply = reply.replace(/\s*\[\[PC_TASK\]\]\s*/g, "").trim();
+    // Задание — дословно последнее сообщение пользователя, а не пересказ модели.
+    const msgs = body.messages || [];
+    const last = [...msgs].reverse().find((m) => m.role === "user");
+    if (!screenRunner) return { reply: reply + "\n\n(Управлять компьютером могу, только когда на ПК запущен мини-Claude.)" };
+    if (last) {
+      for (const [k, j] of jobs) if (Date.now() - j.startedAt > 3600_000) jobs.delete(k);
+      const id = randomBytes(6).toString("hex");
+      const job = { id, status: "running", project: "pc-screen", startedAt: Date.now() };
+      jobs.set(id, job);
+      const text = String(last.text).slice(0, 2000) +
+        "\n\n(Пользователь сейчас не за компьютером — пишет с телефона. В ответе прямо перескажи то, что он просил найти, коротко.)";
+      const history = msgs.slice(0, -1).slice(-6);
+      console.log("[chat] задание на ПК с телефона");
+      Promise.resolve(screenRunner({ text, history, control: true }))
+        .then((r) => Object.assign(job, { status: "done", reply: String(r || "…") }))
+        .catch((e) => Object.assign(job, { status: "error", reply: "Не получилось: " + e.message }));
+      return { reply: reply || "Сейчас посмотрю на компьютере…", job: id };
+    }
   }
   return { reply };
 }
@@ -516,4 +545,4 @@ function bindTailscale() {
 bindTailscale();
 setInterval(bindTailscale, 60_000).unref();
 
-export { pcStatus, chat, ackAlert, lastCodeMessage, setScreenshotProvider, screenStart, screenStatus, screenStop, getPhoneAlerts, dismissPhoneAlert, notify };
+export { setScreenRunner, pcStatus, chat, ackAlert, lastCodeMessage, setScreenshotProvider, screenStart, screenStatus, screenStop, getPhoneAlerts, dismissPhoneAlert, notify };
