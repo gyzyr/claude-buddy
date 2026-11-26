@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld("pet", {
   openChat: () => ipcRenderer.send("open-chat"),
   menu: () => ipcRenderer.send("menu"),
   drag: (phase, x, y) => ipcRenderer.send("drag", phase, x, y),
+  react: (what) => ipcRenderer.send("react", what),
   chat: (messages) => ipcRenderer.invoke("chat", messages),
   // «посмотри на экран»: ответ приходит, когда Claude досмотрит
   screen: (text, history, control) => ipcRenderer.invoke("screen", { text, history, control }),

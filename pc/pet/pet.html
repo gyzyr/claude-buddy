@@ -39,6 +39,14 @@ c.addEventListener("pointerup", (e) => {
   if (dragging) window.pet.drag("end", e.screenX, e.screenY); else window.pet.openChat();
   down = null; dragging = false;
 });
+let rubDir = 0, rubs = [], rubCool = 0;
+c.addEventListener("pointermove", (e) => {
+  if (down || Math.abs(e.movementX) < 2) return;
+  const dir = Math.sign(e.movementX), now = Date.now();
+  if (rubDir && dir !== rubDir) rubs = [...rubs.filter((t) => now - t < 1400), now];
+  rubDir = dir;
+  if (rubs.length >= 4 && now > rubCool) { rubs = []; rubCool = now + 2000; window.pet.react("pet"); }
+});
 c.addEventListener("contextmenu", (e) => { e.preventDefault(); window.pet.menu(); });
 
 const R = (col, x, y, w, h) => { g.fillStyle = col; g.fillRect(x * U, y * U, w * U, h * U); };
@@ -100,7 +108,8 @@ function draw() {
   const gaze = st.gaze || 0, straight = back && gaze === 0;
   g.translate(53 * U, 0); g.scale(sx, 1); g.translate(-53 * U, 0);
   // Рисунок без отражения повёрнут влево (виден правый бок). Идёт вправо — отражаем, чтобы смотрел по ходу, а не пятился.
-  if (back ? gaze === -1 : !left) { g.translate(c.width, 0); g.scale(-1, 1); }
+  const mirrored = back ? gaze === -1 : !left;
+  if (mirrored) { g.translate(c.width, 0); g.scale(-1, 1); }
 
   // ножки: две пары у краёв, как у фигурки
   [24, 33, 60, 69].forEach((lx, i) => {
@@ -136,7 +145,26 @@ function draw() {
 
   const blink = act !== "sleep" && frame % 45 === 0;
   const closed = act === "sleep" || blink, look = act === "coding" ? 2 : walking ? -2.5 : -1; // глаза — в сторону, куда повёрнут
-  if (!back) { eye(33 + look, 38 + dy, closed); eye(57 + look, 38 + dy, closed); }
+  const mood = st.mood;
+  let ex = look, ey = 0;
+  if (st.eyes && !mood) { ex = st.eyes.dx * 3 * (mirrored ? -1 : 1); ey = st.eyes.dy * 2.5; }
+  if (!back) [33, 57].forEach((x0) => {
+    const ax = x0 + ex, ay = 38 + dy + ey;
+    if (mood === "happy") {                                   // ^ ^ — жмурится от удовольствия
+      poly(F.eye, ax, ay + 7, ax + 4.5, ay + 1.5, ax + 9, ay + 7, ax + 7, ay + 7.5, ax + 4.5, ay + 4.5, ax + 2, ay + 7.5);
+    } else if (mood === "dizzy") {                            // × × — голова кружится
+      g.save(); g.strokeStyle = F.eye; g.lineWidth = 2.2 * U; g.beginPath();
+      g.moveTo(ax * U, ay * U); g.lineTo((ax + 9) * U, (ay + 9) * U);
+      g.moveTo((ax + 9) * U, ay * U); g.lineTo(ax * U, (ay + 9) * U); g.stroke(); g.restore();
+    } else if (mood === "annoyed") {                          // прищур и сведённые брови
+      eye(ax, ay, false); R(F.front, ax - 1, ay - 1, 11, 4.5);
+      const inner = x0 === 33 ? ax + 9 : ax;
+      poly(F.eye, ax - 1, ay - 2, ax + 10, ay - 2, inner, ay + 1.5);
+    } else if (mood === "surprised") {                        // широко открытые глаза
+      R(F.eyeLo, ax - 1, ay - 2, 11, 12); R(F.eye, ax - 1, ay - 2, 10, 11);
+      R("rgba(255,255,255,0.45)", ax + 1.5, ay, 2.5, 2.5);
+    } else eye(ax, ay, closed);
+  });
 
   if (act === "coding" && !back) {
     // ноутбук стоит к нам задней крышкой; клавиатура уходит вглубь — вправо-вверх, к нему
@@ -156,6 +184,25 @@ function draw() {
     R("#C0392B", 47.5, 2 + by, 7, 12); R("#C0392B", 47.5, 16 + by, 7, 5);
     R("rgba(255,255,255,0.3)", 47.5, 2 + by, 2, 12);
   }
+  if (st.mood === "happy") {                                  // сердечки поднимаются вверх
+    [[20, 0], [78, 5]].forEach(([hx, off]) => {
+      const t = (frame + off) % 10, hy = 22 - t * 1.8;
+      g.globalAlpha = 1 - t / 10; g.fillStyle = "#E8577A";
+      g.beginPath(); g.arc((hx - 2) * U, hy * U, 2.6 * U, 0, Math.PI * 2); g.arc((hx + 2) * U, hy * U, 2.6 * U, 0, Math.PI * 2); g.fill();
+      poly("#E8577A", hx - 4.6, hy + 0.8, hx + 4.6, hy + 0.8, hx, hy + 6); g.globalAlpha = 1;
+    });
+  } else if (st.mood === "dizzy") {                           // звёздочки кружатся над головой
+    for (let i = 0; i < 3; i++) {
+      const a = frame * 0.55 + (i * Math.PI * 2) / 3, sx2 = 50 + Math.cos(a) * 20, sy2 = 16 + Math.sin(a) * 5;
+      g.fillStyle = "#F5C542"; g.font = `bold ${9 * U}px Segoe UI`; g.fillText("✦", (sx2 - 3) * U, (sy2 + 3) * U);
+    }
+  } else if (st.mood === "annoyed") {                         // значок злости
+    g.save(); g.strokeStyle = "#D63B2F"; g.lineWidth = 2 * U; const ax = 80, ay = 12;
+    [[0, 0], [7, 0], [0, 7], [7, 7]].forEach(([qx, qy]) => { g.beginPath(); g.arc((ax + qx) * U, (ay + qy) * U, 3 * U, 0, Math.PI / 2); g.stroke(); });
+    g.restore();
+  } else if (st.mood === "surprised") {                       // капелька
+    poly("#7FC4F0", 82, 14, 79, 21, 85, 21); g.fillStyle = "#7FC4F0"; g.beginPath(); g.arc(82 * U, 21 * U, 3 * U, 0, Math.PI * 2); g.fill();
+  }
   if (act === "sleep") {
     g.fillStyle = "#F3E3D6"; g.font = `bold ${11 * U}px Segoe UI`;
     g.fillText(frame % 16 < 8 ? "z" : "Z", 84 * U, (16 - (frame % 16) * 0.5) * U);
@@ -165,7 +212,7 @@ function draw() {
 // Кадры только с нужной частотой: в покое — редко, чтобы не грузить CPU.
 function loop() {
   frame++; draw();
-  const ms = st.act === "walk" || st.act === "drag" || (turn > 0 && turn < 1) || (st.act !== "look" && turn > 0) ? 90 : st.act === "look" ? 160 : st.act === "coding" ? 160 : st.act === "alert" ? 120 : 220;
+  const ms = st.mood ? 110 : st.eyes && st.act !== "walk" && st.act !== "drag" ? 160 : st.act === "walk" || st.act === "drag" || (turn > 0 && turn < 1) || (st.act !== "look" && turn > 0) ? 90 : st.act === "look" ? 160 : st.act === "coding" ? 160 : st.act === "alert" ? 120 : 220;
   setTimeout(loop, ms);
 }
 loop();

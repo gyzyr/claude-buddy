@@ -1,7 +1,7 @@
 // Мини-Claude для рабочего стола (Electron).
 // Бегает по верхнему краю панели задач на всех мониторах, кодит, когда работает Claude Code,
 // машет «!», когда задача готова, по клику — чат. В этом же процессе живёт «мозг» для телефона.
-import { app, BrowserWindow, screen, ipcMain, Menu, Tray, nativeImage, Notification, shell, desktopCapturer } from "electron";
+import { app, BrowserWindow, screen, ipcMain, Menu, Tray, nativeImage, Notification, shell, desktopCapturer, powerMonitor } from "electron";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
@@ -59,7 +59,11 @@ function pickTarget() {
     if (onScreen(t + SIZE / 2)) { targetX = t; return; }
   }
 }
-function send(state) { if (pet && !pet.isDestroyed()) pet.webContents.send("state", { ...state, gaze: gaze() }); }
+// Эмоция поверх основного состояния: happy (погладили), dizzy (бросили), annoyed (затыкали), surprised (тык / проснулся).
+let mood = null, moodUntil = 0, eyes = null;
+function emote(m, ms = 2500) { mood = m; moodUntil = Date.now() + ms; send({ act, left, project: lastProject }); }
+const curMood = () => (Date.now() < moodUntil ? mood : null);
+function send(state) { if (pet && !pet.isDestroyed()) pet.webContents.send("state", { ...state, gaze: gaze(), mood: curMood(), eyes }); }
 
 /** Куда смотреть на экран: стоит справа → влево-вверх (-1), слева → вправо-вверх (1), по центру → вверх (0). */
 function gaze() {
@@ -118,22 +122,33 @@ function tick() {
   const s = brain.pcStatus();
   const hour = new Date().getHours();
   if (s.activity !== lastActivity) {
-    if (s.activity === "alert" && Notification.isSupported())
-      new Notification({ title: "Claude", body: `Задача на ПК готова${s.project ? ` — «${s.project}»` : ""}`, silent: true }).show();
+    if (s.activity === "alert") {
+      if (Notification.isSupported())
+        new Notification({ title: "Claude", body: `Задача на ПК готова${s.project ? ` — «${s.project}»` : ""}`, silent: true }).show();
+      if (sleeping || act === "sleep") { act = "idle"; restTicks = 10; }  // новость — просыпается
+      setTimeout(() => hop(true), 50);
+    }
     lastActivity = s.activity;
   }
   lastProject = s.project;
 
-  if (yFree != null) return; // несут мышью или падает — не мешаем
+  if (yFree != null) return; // несут мышью, летит или прыгает — не мешаем
+  checkIdle();
   if (looking) { act = "look"; send({ act, left, project: lastProject }); return; } // стоит спиной, смотрит на экран
   const alerts = brain.getPhoneAlerts();
   if (codeNote && Date.now() - codeNote.time > 10 * 60_000) codeNote = null; // записка Claude Code живёт 10 минут
   updatePopup(codeNote ? [...alerts, codeNote] : alerts);
-  if (alerts.length && !sleeping) { act = "alert"; send({ act, left, project: lastProject }); return; } // машет: кто-то ждёт ответа
+  if (alerts.length && !sleeping) {                                     // машет: кто-то ждёт ответа
+    act = "alert"; send({ act, left, project: lastProject });
+    if (Date.now() - lastHop > 25_000) hop(false);                      // и время от времени подпрыгивает, пока не увидишь
+    return;
+  }
+  if (s.activity === "alert" && !sleeping && Date.now() - lastHop > 25_000) hop(false);
   if (sleeping) act = "sleep";
   else if (s.activity === "coding") act = "coding";
   else if (s.activity === "alert") act = "alert";
   else if (act === "coding" || act === "alert") { act = "idle"; restTicks = 10; }
+  else if (idleNap) act = "sleep";                        // ты отошёл — спит, пока не вернёшься
   else if (act !== "walk") {
     if (restTicks > 0) restTicks--;
     else if (hour >= 1 && hour < 7) act = "sleep";
@@ -208,6 +223,7 @@ function updatePopup(alerts) {
     popupWin.loadFile(join(here, "popup.html"));
     popupWin.webContents.once("did-finish-load", () => { popupWin?.webContents.send("popup", data); popupWin?.showInactive(); });
     popupId = top.id;
+    if (!String(top.id).startsWith("code-")) hop(true);   // пришло уведомление — подпрыгивает вместе с ним
     if (Notification.isSupported() && !String(top.id).startsWith("code-")) new Notification({ title: `${top.app} · ${top.who}`, body: top.summary, silent: false }).show();
   } else {
     popupWin.setPosition(pos.x, pos.y);
@@ -289,33 +305,123 @@ async function lookAtScreen({ text, history, control = false }) {
 }
 ipcMain.on("stop-look", () => stopLooking("кнопка Стоп"));
 
-// ---- перетаскивание: зажал и тащишь — Claude висит в воздухе; отпустил — падает на панель задач ----
-let dragOff = { x: SIZE / 2, y: 30 }, fallTimer = null;
+// ---- физика: перетаскивание, бросок, прыжки ----
+// Зажал и тащишь — висит и болтает ногами. Отпустил с размаху — летит, отскакивает от краёв экрана и пола,
+// после сильного удара кружится голова. Уведомление — подпрыгивает.
+let dragOff = { x: SIZE / 2, y: 30 }, flyTimer = null, lastHop = 0, trail = [];
+const floorY = () => floorAt(x + SIZE / 2) - Math.round(SIZE * FEET);
+
+/** Полёт с начальной скоростью (px за кадр 16 мс). keepAct — после приземления вернуть прежнее состояние (прыжок). */
+function fly(vx, vy, keepAct = null) {
+  if (flyTimer) clearInterval(flyTimer);
+  const [a, b] = span();
+  let bounces = 0, maxV = 0;
+  flyTimer = setInterval(() => {
+    vy += 2.4; x += vx; yFree += vy;
+    if (x < a) { x = a; vx = -vx * 0.6; }
+    if (x > b - SIZE) { x = b - SIZE; vx = -vx * 0.6; }
+    if (!onScreen(x + SIZE / 2)) { x -= vx; vx = 0; }      // между мониторами разной высоты не проваливаемся
+    if (vx) { const nl = vx < 0; if (nl !== left && !keepAct) { left = nl; } }
+    const floor = floorY();
+    if (yFree < floor - 900) { yFree = floor - 900; vy = Math.max(vy, 0); }
+    if (yFree >= floor) {
+      yFree = floor; maxV = Math.max(maxV, vy);
+      if (vy > 14 && bounces < 3) { vy = -vy * 0.38; vx *= 0.6; bounces++; }
+      else {
+        clearInterval(flyTimer); flyTimer = null; yFree = null; targetX = x; place();
+        if (keepAct) { act = keepAct; }
+        else { act = "idle"; restTicks = 12; if (maxV > 30 || bounces >= 2) emote("dizzy", 3000); else if (maxV > 18) emote("surprised", 1200); }
+        send({ act, left, project: lastProject });
+        return;
+      }
+    }
+    place();
+  }, 16);
+}
+
+/** Подпрыгнуть на месте (уведомление). big — повыше. */
+function hop(big) {
+  if (yFree != null || looking || fsHidden || !pet || pet.isDestroyed()) return;
+  lastHop = Date.now();
+  const prev = act === "walk" ? "idle" : act;
+  if (act === "walk") { act = "idle"; restTicks = 6; }
+  yFree = floorY();
+  fly(0, big ? -17 : -12, prev);
+}
+
 ipcMain.on("drag", (_e, phase, sx, sy) => {
   if (phase !== "move") log("drag", phase);
   if (!pet || pet.isDestroyed() || looking) return;
+  const now = Date.now();
   if (phase === "start") {
-    if (fallTimer) { clearInterval(fallTimer); fallTimer = null; }
+    if (flyTimer) { clearInterval(flyTimer); flyTimer = null; }
     const b = pet.getBounds();
     dragOff = { x: sx - b.x, y: sy - b.y };
-    yFree = b.y; act = "drag"; send({ act, left, project: lastProject });
+    yFree = b.y; act = "drag"; trail = [{ x: sx, y: sy, t: now }]; send({ act, left, project: lastProject });
   } else if (phase === "move" && yFree != null) {
     x = sx - dragOff.x; yFree = sy - dragOff.y; place();
+    trail.push({ x: sx, y: sy, t: now }); trail = trail.filter((p) => now - p.t < 100);
   } else if (phase === "end" && yFree != null) {
     x = sx - dragOff.x; yFree = sy - dragOff.y; targetX = x;
-    let v = 0;
-    fallTimer = setInterval(() => {                       // падает с ускорением
-      const floor = floorAt(x + SIZE / 2) - Math.round(SIZE * FEET);
-      v += 2.4; yFree = Math.min(floor, yFree + v);
-      if (yFree < floor - 400) yFree = floor - 400;       // уронили с самого верха — не ждём долго
-      place();
-      if (yFree >= floor) {
-        clearInterval(fallTimer); fallTimer = null; yFree = null;
-        act = "idle"; restTicks = 12; place(); send({ act, left, project: lastProject });
-      }
-    }, 16);
+    // скорость броска — по последним 100 мс движения мыши
+    const p0 = trail.find((p) => now - p.t < 100) || { x: sx, y: sy, t: now };
+    const dt = Math.max(16, now - p0.t);
+    const cap = (v) => Math.max(-45, Math.min(45, v));
+    fly(cap(((sx - p0.x) / dt) * 16), cap(((sy - p0.y) / dt) * 16));
   }
 });
+
+// Погладил (поводил мышкой туда-сюда) — жмурится от удовольствия. Тык, когда чат уже открыт, — вздрагивает;
+// затыкали — обижается и отходит.
+let pokes = [];
+ipcMain.on("react", (_e, what) => {
+  if (yFree != null || looking) return;
+  if (what === "pet") {
+    if (act === "walk") { act = "idle"; }
+    if (act === "sleep" && !sleeping) act = "idle";      // погладили спящего — просыпается довольный
+    restTicks = Math.max(restTicks, 8);
+    emote("happy", 2500);
+  }
+});
+function poke() {
+  const now = Date.now();
+  pokes = [...pokes.filter((t) => now - t < 2500), now];
+  if (pokes.length >= 3) {
+    pokes = [];
+    emote("annoyed", 3500);
+    const [a, b] = span();                                 // отходит подальше от курсора
+    const away = x + (x - a > b - x ? -1 : 1) * (250 + Math.random() * 200);
+    targetX = Math.max(a, Math.min(b - SIZE, away));
+    if (onScreen(targetX + SIZE / 2)) setTimeout(() => { if (yFree == null && !looking) { act = "walk"; startWalking(); } }, 900);
+  } else {
+    emote("surprised", 900);
+    hop(false);
+  }
+}
+
+// Ты отошёл от компьютера (5 минут без мыши и клавиатуры) — засыпает. Вернулся — просыпается и радостно подпрыгивает.
+let idleNap = false;
+function checkIdle() {
+  const idle = powerMonitor.getSystemIdleTime();
+  if (!idleNap && idle >= 300 && !sleeping && act !== "coding" && act !== "alert") {
+    idleNap = true; act = "sleep"; log("idle — сплю");
+  } else if (idleNap && idle < 5) {
+    idleNap = false; act = "idle"; restTicks = 8; log("ты вернулся — просыпаюсь");
+    emote("happy", 2500); setTimeout(() => hop(true), 300);
+  } else if (idleNap && act !== "sleep" && act !== "coding" && act !== "alert") act = "sleep";
+}
+
+// Глаза следят за курсором, когда он рядом.
+setInterval(() => {
+  if (!pet || pet.isDestroyed()) return;
+  let e = null;
+  if (act !== "sleep" && act !== "look" && act !== "drag") {
+    const c = screen.getCursorScreenPoint(), b = pet.getBounds();
+    const dx = c.x - (b.x + SIZE / 2), dy = c.y - (b.y + SIZE * 0.4), d = Math.hypot(dx, dy);
+    if (d < 320 && d > 8) e = { dx: Math.round((dx / d) * 4) / 4, dy: Math.round((dy / d) * 4) / 4 };
+  }
+  if (JSON.stringify(e) !== JSON.stringify(eyes)) { eyes = e; send({ act, left, project: lastProject }); }
+}, 150);
 
 // Клик по Claude с «!» (Claude Code закончил) — облачко с его последним сообщением, а не чат.
 let codeNote = null;
@@ -331,6 +437,7 @@ ipcMain.on("open-chat", () => {
   log("click: looking=" + !!looking, "activity=" + lastActivity);
   if (looking) stopLooking("клик по питомцу");
   else if (lastActivity === "alert") showCodeNote();
+  else if (chatWin && !chatWin.isDestroyed() && chatWin.isVisible()) poke(); // чат уже открыт — просто тык
   else openChat();
 });
 ipcMain.on("menu", () => buildMenu().popup({ window: pet }));
