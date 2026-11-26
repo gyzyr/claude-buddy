@@ -241,7 +241,7 @@ private fun Room(pc: PcStatus?, online: Boolean) {
         val size = 104.dp
         Box(Modifier.align(Alignment.BottomStart).offset(x = (maxWidth - size) * x.value, y = (-6).dp)) {
             Mascot(if (mode == "alert") Mood.HAPPY else if (activity == Activity.SLEEP) Mood.SLEEPY else Mood.HAPPY,
-                size = size, activity = activity, facingLeft = facingLeft)
+                size = size, activity = activity, facingLeft = facingLeft, interactive = true)
         }
     }
 }

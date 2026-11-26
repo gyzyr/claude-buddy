@@ -1,15 +1,39 @@
 package app.claudebuddy.ui
 
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.VectorConverter
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.platform.LocalHapticFeedback
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.hypot
+import kotlin.math.sign
+import kotlin.math.sin
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -27,6 +51,9 @@ enum class Mood { HAPPY, WORRIED, THINKING, SLEEPY }
 /** Что маскот делает: повторяет мини-Claude на ПК или живёт сам по себе. */
 enum class Activity { IDLE, WALK, CODING, SLEEP, ALERT }
 
+/** Реакция на касание — поверх настроения, на пару секунд. */
+enum class Reaction { NONE, HAPPY, SURPRISED, DIZZY, ANNOYED }
+
 val ClaudeOrange = Color(0xFFD97757)
 val Cream = Color(0xFFFAF3EC)
 val Ink = Color(0xFF2B1B14)
@@ -42,18 +69,86 @@ fun Mascot(
     size: Dp = 120.dp,
     activity: Activity = Activity.IDLE,
     facingLeft: Boolean = false,
+    /** Можно трогать: тык — вздрагивает и подпрыгивает, потереть пальцем — гладишь, швырнуть — кружится голова. */
+    interactive: Boolean = false,
 ) {
+    var reaction by remember { mutableStateOf(Reaction.NONE) }
+    var reactionKey by remember { mutableIntStateOf(0) }
+    var reactionMs by remember { mutableIntStateOf(0) }
+    val hop = remember { Animatable(0f) }
+    val pull = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
+    val scope = rememberCoroutineScope()
+    val haptic = LocalHapticFeedback.current
+    val taps = remember { ArrayDeque<Long>() }
+    fun react(r: Reaction, ms: Int) { reaction = r; reactionMs = ms; reactionKey++ }
+    LaunchedEffect(reactionKey) { if (reaction != Reaction.NONE) { delay(reactionMs.toLong()); reaction = Reaction.NONE } }
+    fun jump() = scope.launch { hop.animateTo(1f, tween(130)); hop.animateTo(0f, spring(dampingRatio = 0.35f, stiffness = 400f)) }
+
+    val touch = if (!interactive) Modifier else Modifier.pointerInput(Unit) {
+        awaitEachGesture {
+            val down = awaitFirstDown()
+            val start = down.position
+            var last = start
+            var moved = false
+            var dir = 0
+            var reversals = 0
+            val vt = VelocityTracker().apply { addPosition(down.uptimeMillis, down.position) }
+            while (true) {
+                val ch = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
+                if (!ch.pressed) break
+                vt.addPosition(ch.uptimeMillis, ch.position)
+                val d = ch.position - last
+                last = ch.position
+                val total = ch.position - start
+                if (!moved && total.getDistance() > viewConfiguration.touchSlop) moved = true
+                if (moved) {
+                    ch.consume()
+                    val sd = sign(d.x).toInt()
+                    if (abs(d.x) > 2f && sd != 0) {
+                        if (dir != 0 && sd != dir) {
+                            reversals++
+                            if (reversals >= 3) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        }
+                        dir = sd
+                    }
+                    // гладишь — жмурится, и пока гладишь — не перестаёт
+                    if (reversals >= 3 && (reaction != Reaction.HAPPY || d.getDistance() > 2f)) react(Reaction.HAPPY, 2500)
+                    scope.launch { pull.snapTo(total * 0.35f) } // тянется за пальцем, но упирается
+                }
+            }
+            if (!moved) {
+                val now = System.currentTimeMillis()
+                while (taps.isNotEmpty() && now - taps.first() > 2500) taps.removeFirst()
+                taps.addLast(now)
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                if (taps.size >= 3) { taps.clear(); react(Reaction.ANNOYED, 3000) } // затыкали — обиделся
+                else { react(Reaction.SURPRISED, 900); jump() }
+            } else {
+                val v = vt.calculateVelocity()
+                if (reversals < 3 && hypot(v.x, v.y) > 2500f) {
+                    react(Reaction.DIZZY, 3000); haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                }
+                scope.launch { pull.animateTo(Offset.Zero, spring(dampingRatio = 0.3f, stiffness = 260f)) } // пружинит обратно
+            }
+        }
+    }
+
     val t = rememberInfiniteTransition(label = "mascot")
     val bob by t.animateFloat(0f, 1f, infiniteRepeatable(tween(if (activity == Activity.CODING) 260 else 1400), RepeatMode.Reverse), label = "bob")
     val step by t.animateFloat(0f, 1f, infiniteRepeatable(tween(420, easing = LinearEasing)), label = "step")
     val blink by t.animateFloat(0f, 1f, infiniteRepeatable(tween(3400)), label = "blink")
     val zz by t.animateFloat(0f, 1f, infiniteRepeatable(tween(2200, easing = LinearEasing)), label = "zz")
 
-    Canvas(modifier.size(size)) {
+    val wobble by t.animateFloat(-1f, 1f, infiniteRepeatable(tween(180), RepeatMode.Reverse), label = "wobble")
+    Canvas(modifier.size(size).then(touch).graphicsLayer {
+        translationX = pull.value.x
+        translationY = pull.value.y - hop.value * this.size.height * 0.2f
+        rotationZ = when (reaction) { Reaction.DIZZY -> wobble * 6f; Reaction.ANNOYED -> wobble * 1.5f; else -> 0f }
+    }) {
         val u = this.size.width / 100f // работаем в сетке 100×100
         // рисунок без отражения повёрнут влево (виден правый бок); вправо — отражаем, чтобы не пятился
         scale(if (facingLeft) 1f else -1f, 1f) {
-            drawMascot(u, mood, activity, bob, step, blink, zz)
+            drawMascot(u, mood, activity, bob, step, blink, zz, reaction)
         }
     }
 }
@@ -69,7 +164,7 @@ private val Eye = Color(0xFF26262B)
 private val EyeHi = Color(0xFF55555E)
 private val EyeLo = Color(0xFF141417)
 
-private fun DrawScope.drawMascot(u: Float, mood: Mood, activity: Activity, bob: Float, step: Float, blink: Float, zz: Float) {
+private fun DrawScope.drawMascot(u: Float, mood: Mood, activity: Activity, bob: Float, step: Float, blink: Float, zz: Float, reaction: Reaction = Reaction.NONE) {
     fun p(x: Float, y: Float) = Offset(x * u, y * u)
     fun r(c: Color, x: Float, y: Float, w: Float, h: Float) = drawRect(c, p(x, y), Size(w * u, h * u))
     fun poly(c: Color, vararg pts: Float) = drawPath(Path().apply {
@@ -138,8 +233,22 @@ private fun DrawScope.drawMascot(u: Float, mood: Mood, activity: Activity, bob: 
     listOf(33f, 57f).forEach { ex0 ->
         val ex = ex0 + look
         when {
-            closed -> r(Eye, ex, eyeTop + 4f, 9f, 2.4f)
-            mood == Mood.HAPPY && !coding && !alert -> {
+            reaction == Reaction.DIZZY -> { // × × — голова кружится
+                drawLine(Eye, p(ex, eyeTop), p(ex + 9f, eyeTop + 9f), 2.2f * u)
+                drawLine(Eye, p(ex + 9f, eyeTop), p(ex, eyeTop + 9f), 2.2f * u)
+            }
+            reaction == Reaction.SURPRISED -> { // широко открытые глаза
+                r(EyeLo, ex - 1f, eyeTop - 2f, 11f, 12f); r(Eye, ex - 1f, eyeTop - 2f, 10f, 11f)
+                r(Color.White.copy(alpha = 0.45f), ex + 1.5f, eyeTop, 2.5f, 2.5f)
+            }
+            reaction == Reaction.ANNOYED -> { // прищур и сведённые брови
+                r(EyeLo, ex, eyeTop, 9f, 9f); r(Eye, ex, eyeTop, 8f, 8f)
+                r(Front, ex - 1f, eyeTop - 1f, 11f, 4.5f)
+                val inner = if (ex0 == 33f) ex + 9f else ex
+                poly(Eye, ex - 1f, eyeTop - 2f, ex + 10f, eyeTop - 2f, inner, eyeTop + 1.5f)
+            }
+            closed && reaction != Reaction.HAPPY -> r(Eye, ex, eyeTop + 4f, 9f, 2.4f)
+            reaction == Reaction.HAPPY || (mood == Mood.HAPPY && !coding && !alert) -> {
                 // радостные глаза-«домики»
                 drawPath(Path().apply {
                     moveTo(ex * u, (eyeTop + 8f) * u); lineTo((ex + 4.5f) * u, (eyeTop + 2f) * u)
@@ -173,6 +282,34 @@ private fun DrawScope.drawMascot(u: Float, mood: Mood, activity: Activity, bob: 
         val red = Color(0xFFC0392B)
         r(red, 47.5f, 2f + by, 7f, 12f); r(red, 47.5f, 16f + by, 7f, 5f)
         r(Color.White.copy(alpha = 0.3f), 47.5f, 2f + by, 2f, 12f)
+    }
+
+    when (reaction) {
+        Reaction.HAPPY -> listOf(20f to 0f, 78f to 0.5f).forEach { (hx, off) -> // сердечки поднимаются
+            val k = (zz * 2f + off) % 1f
+            val hy = 22f - k * 18f
+            val c = Color(0xFFE8577A).copy(alpha = 1f - k)
+            drawCircle(c, 2.6f * u, p(hx - 2f, hy)); drawCircle(c, 2.6f * u, p(hx + 2f, hy))
+            poly(c, hx - 4.6f, hy + 0.8f, hx + 4.6f, hy + 0.8f, hx, hy + 6f)
+        }
+        Reaction.DIZZY -> repeat(3) { i -> // звёздочки кружатся над головой
+            val a = (step + i / 3f) * 2f * Math.PI.toFloat()
+            val sx = 50f + cos(a) * 20f
+            val sy = 14f + sin(a) * 5f
+            poly(Color(0xFFF5C542), sx, sy - 4f, sx + 1.3f, sy - 1.3f, sx + 4f, sy, sx + 1.3f, sy + 1.3f,
+                sx, sy + 4f, sx - 1.3f, sy + 1.3f, sx - 4f, sy, sx - 1.3f, sy - 1.3f)
+        }
+        Reaction.ANNOYED -> { // значок злости
+            val c = Color(0xFFD63B2F)
+            listOf(Triple(0f, 0f, 0f), Triple(7f, 0f, 90f), Triple(0f, 7f, 270f), Triple(7f, 7f, 180f)).forEach { (qx, qy, a0) ->
+                drawArc(c, a0, 90f, false, p(77f + qx, 9f + qy), Size(6f * u, 6f * u), style = Stroke(2f * u))
+            }
+        }
+        Reaction.SURPRISED -> { // капелька
+            val c = Color(0xFF7FC4F0)
+            poly(c, 82f, 14f, 79f, 21f, 85f, 21f); drawCircle(c, 3f * u, p(82f, 21f))
+        }
+        Reaction.NONE -> {}
     }
 
     // Z-z-z во сне

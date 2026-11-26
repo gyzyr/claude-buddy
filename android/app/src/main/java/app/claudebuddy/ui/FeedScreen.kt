@@ -53,7 +53,7 @@ fun FeedScreen(store: FeedStore) {
     val limit = settings.videoLimit
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Mascot(if (videos >= limit) Mood.WORRIED else Mood.HAPPY, size = 110.dp)
+        Mascot(if (videos >= limit) Mood.WORRIED else Mood.HAPPY, size = 110.dp, interactive = true)
         Spacer(Modifier.height(8.dp))
 
         Card {
